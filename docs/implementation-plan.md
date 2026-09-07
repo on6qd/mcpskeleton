@@ -113,6 +113,40 @@ HTTP request
 
 ---
 
+## 2b. SDK findings (v1.7.0), and what they change
+
+Inspected after the plan was written. The SDK already provides infrastructure the plan
+assumed we would write:
+
+- `auth.RequireBearerToken(verifier, opts)` — HTTP middleware that verifies a bearer
+  token, puts the result in the request context, and on failure returns `401` with a
+  `WWW-Authenticate` header pointing at the protected-resource metadata.
+- `auth.ProtectedResourceMetadataHandler(metadata)` — serves the RFC 9728 document.
+- `auth.TokenInfo.UserID` — when a `TokenVerifier` sets it, the streamable-HTTP
+  transport itself ensures every request in a session comes from the same user. Session
+  hijacking prevention is therefore transport-level, not ours.
+- `auth.TokenInfoFromContext(ctx)` — how an authenticated identity reaches a handler.
+- `mcp.AddTool` derives input/output JSON Schema from Go types by reflection, and
+  validates incoming arguments.
+
+Consequences for the steps below:
+
+- **E2** becomes a thin bridge: a `auth.TokenVerifier` closure that calls our
+  `port.Authenticator` and maps `domain.Principal` -> `*auth.TokenInfo`. The SDK type
+  never crosses into `core` or `domain`; the port stays ours, which is what keeps the
+  OIDC swap a single-adapter change.
+- **E3** becomes constructing the metadata struct from config and handing it to the
+  SDK handler.
+- **E5** becomes setting `TokenInfo.UserID` from `Principal.Subject` and an integration
+  test asserting the transport rejects a swapped token — not hand-written pinning logic.
+- **C1**'s `tool.Typed` still exists: the core dispatches on our own `port.Tool`, and the
+  MCP adapter registers a single generic bridge per tool. The SDK's reflection is used
+  for schema generation, not as a substitute for the port.
+
+None of the section 1 decisions change.
+
+---
+
 ## 3. Working agreement
 
 - Smallest possible increments. One step = one coherent change.
@@ -215,12 +249,15 @@ path, log level, external base URL, authorization-server list), validated at boo
 _Test:_ defaults, overrides, validation failures.
 
 **E2. Auth middleware.**
-`internal/adapter/in/http`: extract bearer, authenticate, put principal in request
-context, `401` + `WWW-Authenticate` pointing at the metadata document on failure.
-_Test:_ `httptest` — missing header, malformed header, bad token, success.
+`internal/adapter/in/http`: a `auth.TokenVerifier` bridging to `port.Authenticator`,
+mapping `domain.Principal` -> `*auth.TokenInfo` (including `UserID`), wrapped with
+`auth.RequireBearerToken`.
+_Test:_ `httptest` — missing header, malformed header, bad token, success, and that the
+`401` carries a `WWW-Authenticate` pointing at the metadata document.
 
 **E3. Operational endpoints.**
-`/healthz`, `/readyz`, `/.well-known/oauth-protected-resource` built from config.
+`/healthz`, `/readyz`, and `/.well-known/oauth-protected-resource` served by
+`auth.ProtectedResourceMetadataHandler` from a config-built metadata struct.
 _Test:_ `httptest` — status codes, metadata document shape, config-driven AS list.
 
 **E4. MCP server adapter.**
@@ -229,9 +266,10 @@ Wire the SDK's streamable-HTTP handler to the core service: `tools/list` filtere
 _Test:_ in-process integration test using the SDK's own client — initialize, list, call.
 
 **E5. Session subject pinning.**
-Reject a request whose token resolves to a different subject than the one that opened
-the session.
-_Test:_ integration — same session, swapped token, expect `401`.
+Set `TokenInfo.UserID` from `Principal.Subject` so the transport pins a session to one
+user. This is verification of SDK behaviour rather than new logic.
+_Test:_ integration — open a session with one token, reuse the session id with a
+different user's token, expect rejection.
 
 ### Phase F — Binary
 

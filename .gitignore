@@ -1,0 +1,17 @@
+# Binaries
+/bin/
+/mcpskeleton
+
+# Test artifacts
+*.out
+coverage.*
+
+# Local runtime data — never commit credentials
+users.json
+notes.json
+*.local.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
