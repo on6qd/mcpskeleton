@@ -170,3 +170,28 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+func TestRegistryScopes(t *testing.T) {
+	t.Parallel()
+
+	r := core.NewRegistry(
+		newFakeTool("notes_write", "notes:write"),
+		newFakeTool("echo", "tools:echo"),
+		newFakeTool("notes_read", "notes:read"),
+		newFakeTool("notes_list_alias", "notes:read"), // duplicate scope
+		newFakeTool("open", ""),                       // no scope
+	)
+
+	want := []string{"notes:read", "notes:write", "tools:echo"}
+	if got := r.Scopes(); !equal(got, want) {
+		t.Errorf("Scopes() = %v, want %v (distinct, sorted, no empty)", got, want)
+	}
+}
+
+func TestRegistryScopesOnAnEmptyRegistry(t *testing.T) {
+	t.Parallel()
+
+	if got := core.NewRegistry().Scopes(); len(got) != 0 {
+		t.Errorf("Scopes() = %v, want empty", got)
+	}
+}

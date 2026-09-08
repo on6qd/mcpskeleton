@@ -74,3 +74,24 @@ func (r *Registry) All() []port.Tool {
 func (r *Registry) Names() []string {
 	return slices.Clone(r.order)
 }
+
+// Scopes returns every distinct scope some registered tool requires, sorted.
+//
+// It exists for the protected-resource metadata document, which advertises the
+// scopes a client may ask an authorization server for. Note that this is a set
+// of scope names, not the tool-to-scope mapping: which tool needs which
+// permission stays unpublished.
+func (r *Registry) Scopes() []string {
+	seen := make(map[string]bool, len(r.order))
+	scopes := make([]string, 0, len(r.order))
+	for _, name := range r.order {
+		scope := r.byName[name].RequiredScope()
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		scopes = append(scopes, scope)
+	}
+	slices.Sort(scopes)
+	return scopes
+}
