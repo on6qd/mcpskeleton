@@ -289,3 +289,49 @@ func TestPathsAreAbsolute(t *testing.T) {
 			config.ProtectedResourceMetadataPath)
 	}
 }
+
+// PubliclyAddressed decides whether the MCP adapter keeps the SDK's DNS
+// rebinding check, so it has to read "is this server reached by a name that is
+// not this machine" and nothing looser.
+func TestPubliclyAddressed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		baseURL string
+		want    bool
+	}{
+		{"http://localhost:8080", false},
+		{"http://LOCALHOST:8080", false},
+		{"http://127.0.0.1:8080", false},
+		{"http://127.0.0.53:8080", false},
+		{"http://[::1]:8080", false},
+		{"https://mcpserver.example.com", true},
+		{"https://mcpserver.example.com:8443", true},
+		{"http://192.168.1.10:8080", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.baseURL, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := config.Load(env(map[string]string{"MCPSKELETON_BASE_URL": tt.baseURL}))
+			if err != nil {
+				t.Fatalf("Load error = %v", err)
+			}
+			if got := cfg.PubliclyAddressed(); got != tt.want {
+				t.Errorf("PubliclyAddressed() with base URL %s = %v, want %v", tt.baseURL, got, tt.want)
+			}
+		})
+	}
+}
+
+// A zero Config has no BaseURL, and asking it this question must not panic:
+// it is asked while a handler is being built, which is exactly where a nil
+// dereference would take down the process at boot.
+func TestPubliclyAddressedWithoutABaseURL(t *testing.T) {
+	t.Parallel()
+
+	if (config.Config{}).PubliclyAddressed() {
+		t.Error("a Config with no BaseURL reported itself publicly addressed")
+	}
+}

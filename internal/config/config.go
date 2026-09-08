@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -169,6 +170,33 @@ func Load(getenv Getenv) (Config, error) {
 // endpoint, which is the resource a token must be audienced to.
 func (c Config) ResourceURL() string {
 	return c.BaseURL.JoinPath(MCPPath).String()
+}
+
+// PubliclyAddressed reports whether BaseURL names this server by a host that is
+// not loopback — the operator stating that clients reach it from somewhere
+// other than this machine.
+//
+// It exists for one decision, made in the MCP adapter. The SDK refuses a
+// request whose Host header is not loopback when the listener is, which is DNS
+// rebinding protection for a server nothing but this machine can reach. A
+// reverse proxy that terminates TLS and dials 127.0.0.1 trips that check on
+// every request, because the Host it forwards is the public name it was asked
+// for. BaseURL is where that name is declared, so a non-loopback BaseURL is the
+// statement that the check no longer describes this deployment.
+func (c Config) PubliclyAddressed() bool {
+	if c.BaseURL == nil {
+		return false
+	}
+	return !isLoopbackHost(c.BaseURL.Hostname())
+}
+
+// isLoopbackHost reports whether host names the local machine.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Paths the HTTP adapter serves. They live here so that the metadata document

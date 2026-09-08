@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bartdelepeleer/mcpskeleton/internal/config"
 	"github.com/bartdelepeleer/mcpskeleton/internal/core"
 	"github.com/bartdelepeleer/mcpskeleton/internal/domain"
 )
@@ -26,7 +27,7 @@ type ServerInfo struct {
 //
 // It must be mounted behind RequireAuth: it reads the caller from the request
 // context and has no way to establish one itself.
-func MCPHandler(svc *core.Service, info ServerInfo, log *slog.Logger) http.Handler {
+func MCPHandler(svc *core.Service, cfg config.Config, info ServerInfo, log *slog.Logger) http.Handler {
 	if svc == nil {
 		panic("http: nil service")
 	}
@@ -43,6 +44,23 @@ func MCPHandler(svc *core.Service, info ServerInfo, log *slog.Logger) http.Handl
 	// misleading "no such tool".
 	server := newServer(svc, info, log)
 
+	opts := &mcp.StreamableHTTPOptions{
+		// The SDK rejects any request whose Host header is not loopback while
+		// the listener is, reasoning that such a server is reachable only from
+		// this machine, so a foreign Host can only be DNS rebinding. A reverse
+		// proxy that terminates TLS and dials 127.0.0.1 breaks that reasoning:
+		// the Host it forwards is the public name clients were told to use, and
+		// every legitimate request carries it.
+		//
+		// Deferring to BaseURL keeps the protection wherever it still describes
+		// the deployment — a server left on the default localhost BaseURL is
+		// precisely the one the check was written for — and drops it only where
+		// the operator has declared another name. Little is given up by
+		// dropping it there: /mcp sits behind RequireAuth, and a rebinding
+		// attack has no bearer token to send.
+		DisableLocalhostProtection: cfg.PubliclyAddressed(),
+	}
+
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		if _, ok := PrincipalFromContext(r.Context()); !ok {
 			// Unreachable behind RequireAuth. Returning nil makes the SDK answer
@@ -53,7 +71,7 @@ func MCPHandler(svc *core.Service, info ServerInfo, log *slog.Logger) http.Handl
 			return nil
 		}
 		return server
-	}, nil)
+	}, opts)
 }
 
 // newServer builds the MCP server, carrying every tool.

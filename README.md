@@ -151,6 +151,26 @@ All environment variables, read and validated once at boot.
 | `MCPSKELETON_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `MCPSKELETON_AUTHORIZATION_SERVERS` | none | Comma-separated issuer URLs, published in the metadata document |
 
+### Running behind a reverse proxy
+
+Set `BASE_URL` to the public name. It carries a second consequence beyond the
+metadata document: the MCP SDK refuses any request whose `Host` header is not
+loopback while the listener is, which is DNS rebinding protection for a server
+only this machine can reach. A proxy that terminates TLS and dials `127.0.0.1`
+trips that check on every request, because the `Host` it forwards is the public
+name. A non-loopback `BASE_URL` is how you say the check no longer describes
+this deployment; leave it at the default and the protection stays on.
+
+```caddyfile
+mcp.example.com {
+	reverse_proxy localhost:9100
+}
+```
+
+```bash
+MCPSKELETON_ADDR=:9100 MCPSKELETON_BASE_URL=https://mcp.example.com mcpskeleton serve
+```
+
 ## Endpoints
 
 | Path | Auth | Purpose |

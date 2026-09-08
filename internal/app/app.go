@@ -72,7 +72,7 @@ func Build(cfg config.Config, log *slog.Logger) (*Wiring, error) {
 	// to be reachable without a credential.
 	mux.Handle(config.MCPPath,
 		adapterhttp.RequireAuth(authenticator, adapterhttp.MetadataURL(cfg), log)(
-			adapterhttp.MCPHandler(svc, adapterhttp.ServerInfo{Name: Name, Version: Version}, log)))
+			adapterhttp.MCPHandler(svc, cfg, adapterhttp.ServerInfo{Name: Name, Version: Version}, log)))
 
 	// Discovery: how a caller who has not authenticated learns where to.
 	mux.Handle(config.ProtectedResourceMetadataPath, adapterhttp.MetadataHandler(cfg, reg.Scopes()))

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -27,6 +28,24 @@ import (
 
 var serverInfo = adapterhttp.ServerInfo{Name: "mcpskeleton-test", Version: "0.0.0-test"}
 
+// baseURLConfig is the only part of the configuration this handler reads: how
+// clients are told to address the server.
+func baseURLConfig(t *testing.T, baseURL string) config.Config {
+	t.Helper()
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		t.Fatalf("parsing %q: %v", baseURL, err)
+	}
+	return config.Config{BaseURL: u}
+}
+
+// localConfig is the default deployment: reached as localhost and nothing else.
+func localConfig(t *testing.T) config.Config {
+	t.Helper()
+	return baseURLConfig(t, "http://localhost:8080")
+}
+
 // toolSet is the production tool set, wired to an in-memory note store.
 func toolSet(t *testing.T) *core.Registry {
 	t.Helper()
@@ -42,7 +61,7 @@ func newTestServer(t *testing.T, principals map[string]domain.Principal) *httpte
 
 	mux := http.NewServeMux()
 	mux.Handle(config.MCPPath, adapterhttp.RequireAuth(auth, metadataURL, nil)(
-		adapterhttp.MCPHandler(svc, serverInfo, nil)))
+		adapterhttp.MCPHandler(svc, localConfig(t), serverInfo, nil)))
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -414,7 +433,7 @@ func TestEveryRequestIsAuthenticated(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.Handle(config.MCPPath, adapterhttp.RequireAuth(auth, metadataURL, nil)(
-		adapterhttp.MCPHandler(svc, serverInfo, nil)))
+		adapterhttp.MCPHandler(svc, localConfig(t), serverInfo, nil)))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -500,4 +519,75 @@ func replay(t *testing.T, srv *httptest.Server, sessionID, token string) int {
 	defer res.Body.Close()
 	_, _ = io.Copy(io.Discard, res.Body)
 	return res.StatusCode
+}
+
+// The SDK refuses a non-loopback Host header when the listener is on loopback.
+// A reverse proxy terminating TLS and dialling 127.0.0.1 sends exactly that on
+// every request, so a server that cannot be told it lives behind one is a
+// server that cannot be deployed. BaseURL is what tells it.
+func TestBaseURLDecidesWhichHostHeadersAreAccepted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		baseURL string
+		want    int
+	}{
+		{
+			name:    "addressed by a public name",
+			baseURL: "https://mcp.example.com",
+			want:    http.StatusOK,
+		},
+		{
+			// The deployment the SDK's check was written for, where a foreign
+			// Host really is somebody else's DNS pointed at this machine.
+			name:    "left on the default localhost base URL",
+			baseURL: "http://localhost:8080",
+			want:    http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			auth := &fakeAuthenticator{principals: map[string]domain.Principal{
+				"full": {Subject: "alice", Scopes: []string{echo.Scope}},
+			}}
+			svc := core.NewService(toolSet(t), core.ScopeAuthorizer{})
+
+			mux := http.NewServeMux()
+			mux.Handle(config.MCPPath, adapterhttp.RequireAuth(auth, metadataURL, nil)(
+				adapterhttp.MCPHandler(svc, baseURLConfig(t, tt.baseURL), serverInfo, nil)))
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":` +
+				`{"protocolVersion":"2025-06-18","capabilities":{},` +
+				`"clientInfo":{"name":"test-client","version":"0.0.0"}}}`
+
+			req, err := http.NewRequest(http.MethodPost, srv.URL+config.MCPPath, strings.NewReader(body))
+			if err != nil {
+				t.Fatalf("NewRequest error = %v", err)
+			}
+			// What a reverse proxy forwards: the name the client asked for,
+			// not the address it dialled.
+			req.Host = "mcp.example.com"
+			req.Header.Set("Authorization", "Bearer full")
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+
+			res, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatalf("Do error = %v", err)
+			}
+			defer res.Body.Close()
+			_, _ = io.Copy(io.Discard, res.Body)
+
+			if res.StatusCode != tt.want {
+				t.Errorf("POST %s with Host %q and base URL %s = %d, want %d",
+					config.MCPPath, req.Host, tt.baseURL, res.StatusCode, tt.want)
+			}
+		})
+	}
 }
