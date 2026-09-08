@@ -271,3 +271,84 @@ func TestTypedPanicsOnWiringMistakes(t *testing.T) {
 }
 
 var _ port.Tool = tool.Typed("compile", "", "", greet)
+
+// The schema published to the model has to mean something. Decoding alone
+// accepts a missing required field as a zero value and ignores what the schema
+// declares, which would leave each tool re-checking by hand what it already
+// told the model.
+//
+// What the derived schema can express is types, which fields are required
+// (everything without omitempty) and that no other properties are allowed.
+// Those are what is enforced here.
+func TestTypedEnforcesThePublishedSchema(t *testing.T) {
+	t.Parallel()
+
+	type constrainedArgs struct {
+		Name    string   `json:"name" jsonschema:"the name"`
+		Count   int      `json:"count,omitempty"`
+		Tags    []string `json:"tags,omitempty"`
+		Enabled bool     `json:"enabled,omitempty"`
+	}
+
+	tl := tool.Typed("constrained", "", "", func(context.Context, domain.Principal, constrainedArgs) (port.Result, error) {
+		return port.Result{Text: "ran"}, nil
+	})
+
+	tests := []struct {
+		name string
+		args string
+		ok   bool
+	}{
+		{"everything supplied", `{"name":"x","count":5,"tags":["a"],"enabled":true}`, true},
+		{"optional fields omitted", `{"name":"x"}`, true},
+		{"required field missing", `{"count":5}`, false},
+		{"string where an integer belongs", `{"name":"x","count":"five"}`, false},
+		{"integer where a string belongs", `{"name":123}`, false},
+		{"object where an array belongs", `{"name":"x","tags":{"a":1}}`, false},
+		{"string where a boolean belongs", `{"name":"x","enabled":"yes"}`, false},
+		{"an undeclared property", `{"name":"x","colour":"red"}`, false},
+		{"not an object at all", `["name"]`, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := tl.Execute(context.Background(), domain.Principal{Subject: "alice"}, json.RawMessage(tc.args))
+			switch {
+			case tc.ok && err != nil:
+				t.Errorf("Execute(%s) error = %v, want success", tc.args, err)
+			case !tc.ok && err == nil:
+				t.Errorf("Execute(%s) succeeded; the published schema is not enforced", tc.args)
+			case !tc.ok:
+				var toolErr *domain.ToolError
+				if !errors.As(err, &toolErr) {
+					t.Errorf("Execute(%s) error = %v (%T), want a *domain.ToolError", tc.args, err, err)
+				}
+			}
+		})
+	}
+}
+
+// A required field must be rejected rather than silently arriving as its zero
+// value, which is the specific failure that motivated validating at all.
+func TestTypedRejectsAMissingRequiredFieldRatherThanZeroing(t *testing.T) {
+	t.Parallel()
+
+	type args struct {
+		Name string `json:"name"`
+	}
+
+	var reached bool
+	tl := tool.Typed("required", "", "", func(_ context.Context, _ domain.Principal, in args) (port.Result, error) {
+		reached = true
+		return port.Result{Text: in.Name}, nil
+	})
+
+	if _, err := tl.Execute(context.Background(), domain.Principal{Subject: "alice"}, json.RawMessage(`{}`)); err == nil {
+		t.Error("Execute succeeded with a required field missing")
+	}
+	if reached {
+		t.Error("the tool ran with a zero value where a required argument should have been")
+	}
+}

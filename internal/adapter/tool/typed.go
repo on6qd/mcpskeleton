@@ -31,6 +31,7 @@ type typed[In any] struct {
 	description string
 	scope       string
 	schema      json.RawMessage
+	resolved    *jsonschema.Resolved
 	fn          Func[In]
 }
 
@@ -59,12 +60,19 @@ func Typed[In any](name, description, scope string, fn Func[In]) port.Tool {
 	if err != nil {
 		panic(fmt.Sprintf("tool %q: cannot marshal its schema: %v", name, err))
 	}
+	// Resolved once, here, so that validating a call is not a per-request
+	// compile of the schema.
+	resolved, err := schema.Resolve(nil)
+	if err != nil {
+		panic(fmt.Sprintf("tool %q: cannot prepare its schema for validation: %v", name, err))
+	}
 
 	return &typed[In]{
 		name:        name,
 		description: description,
 		scope:       scope,
 		schema:      raw,
+		resolved:    resolved,
 		fn:          fn,
 	}
 }
@@ -74,10 +82,11 @@ func (t *typed[In]) Description() string          { return t.description }
 func (t *typed[In]) RequiredScope() string        { return t.scope }
 func (t *typed[In]) InputSchema() json.RawMessage { return t.schema }
 
-// Execute decodes args into In and runs the function.
+// Execute validates args against the published schema, decodes them into In,
+// and runs the function.
 //
-// Absent or empty arguments decode as an empty object, so a tool whose fields
-// are all optional can be called with nothing. A decode failure becomes a
+// Absent or empty arguments are treated as an empty object, so a tool whose
+// fields are all optional can be called with nothing. Every rejection is a
 // domain.ToolError rather than an infrastructure error: the model supplied the
 // arguments, so the model is who can fix them.
 func (t *typed[In]) Execute(ctx context.Context, p domain.Principal, args json.RawMessage) (port.Result, error) {
@@ -85,11 +94,26 @@ func (t *typed[In]) Execute(ctx context.Context, p domain.Principal, args json.R
 		args = json.RawMessage("{}")
 	}
 
+	// Validation comes before decoding, and is what makes the published schema
+	// mean something. Decoding alone silently accepts a missing required field
+	// as a zero value and ignores every constraint the schema declares —
+	// minimum, maxLength, enum — leaving each tool to re-check by hand what it
+	// already told the model. The MCP SDK's low-level tool registration does no
+	// validation of its own, so if it does not happen here it does not happen.
+	var instance any
+	if err := json.Unmarshal(args, &instance); err != nil {
+		return port.Result{}, domain.WrapToolError(err, "arguments for %q are not valid JSON", t.name)
+	}
+	if err := t.resolved.Validate(instance); err != nil {
+		return port.Result{}, domain.WrapToolError(err, "invalid arguments for %q", t.name)
+	}
+
 	var in In
 	dec := json.NewDecoder(bytes.NewReader(args))
-	// Unknown fields are rejected because the derived schema disallows
-	// additional properties. Silently dropping them would let a model believe a
-	// misspelled argument had been honoured.
+	// Unknown fields are rejected here as well as by the schema, so a tool whose
+	// arguments are not a struct — and so carry no additionalProperties — still
+	// refuses a misspelled field rather than letting a model believe it was
+	// honoured.
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		return port.Result{}, domain.WrapToolError(err, "invalid arguments for %q", t.name)
