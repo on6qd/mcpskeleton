@@ -38,7 +38,7 @@ func TestRunRejectsUnknownCommands(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := run(context.Background(), tc.args, env, null, null)
+			err := run(context.Background(), tc.args, env, null, null, time.Now)
 			if err == nil {
 				t.Fatalf("run(%v) succeeded, want an error", tc.args)
 			}
@@ -53,7 +53,7 @@ func TestRunHelpSucceeds(t *testing.T) {
 	t.Parallel()
 
 	null := devNull(t)
-	if err := run(context.Background(), []string{"help"}, func(string) string { return "" }, null, null); err != nil {
+	if err := run(context.Background(), []string{"help"}, func(string) string { return "" }, null, null, time.Now); err != nil {
 		t.Errorf("run(help) error = %v", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestRunReportsBadConfiguration(t *testing.T) {
 		return ""
 	}
 
-	err := run(context.Background(), []string{"serve"}, env, null, null)
+	err := run(context.Background(), []string{"serve"}, env, null, null, time.Now)
 	if err == nil {
 		t.Fatal("run(serve) succeeded with an invalid log level")
 	}
@@ -97,7 +97,7 @@ func TestServeStopsOnCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- run(ctx, []string{"serve"}, env, null, null) }()
+	go func() { done <- run(ctx, []string{"serve"}, env, null, null, time.Now) }()
 
 	cancel()
 

@@ -70,6 +70,24 @@ func (s *Service) ListTools(p domain.Principal) []ToolInfo {
 	return infos
 }
 
+// AllTools returns every registered tool, unfiltered, in registration order.
+//
+// It exists for a transport that registers the whole tool set and filters what
+// it advertises per request. Authorization is not skipped by using it: what a
+// caller may actually run is still decided by CallTool.
+func (s *Service) AllTools() []ToolInfo {
+	tools := s.registry.All()
+	infos := make([]ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		infos = append(infos, ToolInfo{
+			Name:        t.Name(),
+			Description: t.Description(),
+			InputSchema: t.InputSchema(),
+		})
+	}
+	return infos
+}
+
 // CallTool authorizes, resolves and runs a tool.
 //
 // It returns an error wrapping domain.ErrToolNotFound for an unknown name,
@@ -83,10 +101,11 @@ func (s *Service) CallTool(ctx context.Context, p domain.Principal, name string,
 	}
 
 	// Lookup runs before authorization, so a caller lacking the scope learns
-	// that the tool exists. That is the deliberate trade: this is a developer
-	// tool where a clear "you lack notes:write" beats a misleading "no such
-	// tool", and the tool set is not a secret worth protecting by obscurity. A
-	// deployment that disagrees can swap the two checks.
+	// that the tool exists and is told which scope it needs. That is the
+	// deliberate trade: this is a developer tool where a clear "you lack
+	// notes:write" beats a misleading "no such tool", and the tool set is not a
+	// secret worth protecting by obscurity. A deployment that disagrees can swap
+	// the two checks.
 	if !s.authz.Allow(p, tool.RequiredScope()) {
 		return CallOutcome{}, fmt.Errorf("%w: %q requires scope %q", domain.ErrForbidden, name, tool.RequiredScope())
 	}

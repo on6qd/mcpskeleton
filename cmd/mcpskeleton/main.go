@@ -4,10 +4,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/bartdelepeleer/mcpskeleton/internal/app"
 	"github.com/bartdelepeleer/mcpskeleton/internal/config"
@@ -20,14 +22,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr); err != nil {
+	if err := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr, time.Now); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
 // run is main without the process, so it can be tested.
-func run(ctx context.Context, args []string, getenv config.Getenv, stdout, stderr *os.File) error {
+func run(ctx context.Context, args []string, getenv config.Getenv, stdout, stderr io.Writer, now func() time.Time) error {
 	cfg, err := config.Load(getenv)
 	if err != nil {
 		return err
@@ -44,6 +46,12 @@ func run(ctx context.Context, args []string, getenv config.Getenv, stdout, stder
 	case "serve":
 		return app.Serve(ctx, cfg, log, nil)
 
+	case "token":
+		return runToken(args[1:], cfg, stdout, now)
+
+	case "user":
+		return runUser(args[1:], cfg, stdout)
+
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -54,12 +62,16 @@ func run(ctx context.Context, args []string, getenv config.Getenv, stdout, stder
 	}
 }
 
-func usage(w *os.File) {
+func usage(w io.Writer) {
 	fmt.Fprintf(w, `mcpskeleton — an MCP server over streamable HTTP
 
 Usage:
-  mcpskeleton serve      Run the server
-  mcpskeleton help       Show this message
+  mcpskeleton serve                         Run the server
+  mcpskeleton token issue --user <subject>  Issue a credential
+  mcpskeleton token list                    List issued credentials
+  mcpskeleton token revoke <token-id>       Revoke a credential
+  mcpskeleton user list                     List provisioned users
+  mcpskeleton help                          Show this message
 
 Configuration comes from the environment:
   %sADDR                    listen address (default :8080)

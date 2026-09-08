@@ -13,6 +13,9 @@ import (
 	"github.com/bartdelepeleer/mcpskeleton/internal/domain"
 )
 
+// methodListTools is the MCP method whose result is filtered per caller.
+const methodListTools = "tools/list"
+
 // ServerInfo identifies this server to clients.
 type ServerInfo struct {
 	Name    string
@@ -31,18 +34,17 @@ func MCPHandler(svc *core.Service, info ServerInfo, log *slog.Logger) http.Handl
 		log = slog.New(slog.DiscardHandler)
 	}
 
-	// The SDK calls getServer once per session, after the auth middleware has
-	// run, so the caller is known here. Each session therefore gets a server
-	// carrying only the tools that caller may use, and tools/list is filtered
-	// without a line of listing code.
-	//
-	// A session's tool list is fixed when the session opens. That is a listing
-	// concern only: every tools/call is authorized again, against the principal
-	// on that request, so a narrower token presented later cannot call anything
-	// the check would refuse.
+	// One server, shared by every session. Everything that varies per caller is
+	// decided per request instead: which tools are advertised, and whether a
+	// call is allowed. That keeps the advertised list current — a token whose
+	// scopes changed is reflected on the next request rather than at the next
+	// reconnect — and it keeps every tool routable, which is what lets a
+	// forbidden call be answered with the scope it needs instead of a
+	// misleading "no such tool".
+	server := newServer(svc, info, log)
+
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		principal, ok := PrincipalFromContext(r.Context())
-		if !ok {
+		if _, ok := PrincipalFromContext(r.Context()); !ok {
 			// Unreachable behind RequireAuth. Returning nil makes the SDK answer
 			// 400, which is the right answer to a request that arrived without
 			// the middleware that was supposed to be in front of it.
@@ -50,40 +52,89 @@ func MCPHandler(svc *core.Service, info ServerInfo, log *slog.Logger) http.Handl
 				"MCP request reached the handler with no authenticated caller")
 			return nil
 		}
-		return newServer(svc, principal, info, log)
+		return server
 	}, nil)
 }
 
-// newServer builds the MCP server one session sees.
-func newServer(svc *core.Service, sessionPrincipal domain.Principal, info ServerInfo, log *slog.Logger) *mcp.Server {
+// newServer builds the MCP server, carrying every tool.
+func newServer(svc *core.Service, info ServerInfo, log *slog.Logger) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    info.Name,
 		Version: info.Version,
 	}, nil)
 
-	for _, tool := range svc.ListTools(sessionPrincipal) {
+	for _, tool := range svc.AllTools() {
 		server.AddTool(&mcp.Tool{
 			Name:        tool.Name,
 			Description: tool.Description,
 			// The SDK accepts raw JSON here, which is why port.Tool can publish
 			// its schema as json.RawMessage and no conversion is needed.
 			InputSchema: tool.InputSchema,
-		}, toolHandler(svc, tool.Name, sessionPrincipal, log))
+		}, toolHandler(svc, tool.Name, log))
 	}
+
+	server.AddReceivingMiddleware(filterListedTools(svc, log))
 
 	return server
 }
 
+// filterListedTools removes from tools/list the tools the caller may not use.
+//
+// Filtering the advertised list rather than only the call keeps the model from
+// planning around a capability it will be refused. It runs on the result rather
+// than at registration so that the answer reflects the token presented on this
+// request.
+func filterListedTools(svc *core.Service, log *slog.Logger) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != methodListTools {
+				return result, err
+			}
+
+			listed, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, err
+			}
+
+			principal, ok := PrincipalFromContext(ctx)
+			if !ok {
+				// No caller means no tools. Failing closed here matters: this is
+				// the only thing standing between an unauthenticated request
+				// that somehow reached the server and the full tool list.
+				log.LogAttrs(ctx, slog.LevelError, "tools/list with no authenticated caller")
+				listed.Tools = nil
+				return listed, nil
+			}
+
+			allowed := make(map[string]bool)
+			for _, tool := range svc.ListTools(principal) {
+				allowed[tool.Name] = true
+			}
+
+			kept := make([]*mcp.Tool, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				if allowed[tool.Name] {
+					kept = append(kept, tool)
+				}
+			}
+			listed.Tools = kept
+
+			return listed, nil
+		}
+	}
+}
+
 // toolHandler adapts one core tool call to the SDK's handler shape.
-func toolHandler(svc *core.Service, name string, sessionPrincipal domain.Principal, log *slog.Logger) mcp.ToolHandler {
+func toolHandler(svc *core.Service, name string, log *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Prefer the caller established on this request: authentication runs
-		// per request, so this reflects the token presented now rather than the
-		// one that opened the session. The session's principal is the fallback
-		// for a transport that does not carry request context this far.
+		// Authentication runs per request, so this is the token presented now,
+		// not the one that opened the session.
 		principal, ok := PrincipalFromContext(ctx)
 		if !ok {
-			principal = sessionPrincipal
+			log.LogAttrs(ctx, slog.LevelError, "tool call with no authenticated caller",
+				slog.String("tool", name))
+			return nil, errors.New("unauthenticated")
 		}
 
 		var args json.RawMessage
@@ -106,11 +157,10 @@ func toolHandler(svc *core.Service, name string, sessionPrincipal domain.Princip
 			}, nil
 		}
 
-		result := &mcp.CallToolResult{
+		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: outcome.Result.Text}},
 			StructuredContent: outcome.Result.Structured,
-		}
-		return result, nil
+		}, nil
 	}
 }
 
@@ -129,8 +179,6 @@ func protocolError(ctx context.Context, err error, name string, p domain.Princip
 		return err
 
 	case errors.Is(err, domain.ErrToolNotFound):
-		// Reachable when a client calls a tool it was never listed, which is a
-		// client bug worth stating plainly.
 		log.LogAttrs(ctx, slog.LevelInfo, "unknown tool called",
 			slog.String("tool", name),
 			slog.String("subject", p.Subject),
