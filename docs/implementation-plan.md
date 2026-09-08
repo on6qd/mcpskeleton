@@ -316,3 +316,40 @@ The automated gate (unit + in-process end-to-end) runs unattended. Verifying aga
 real client needs the user: MCP Inspector requires Node, and `claude mcp add` writes to
 the user's own config. Both commands are documented in the README for a joint session at
 the end.
+
+---
+
+## 7. Implementation record
+
+Every step in section 4 is built, tested and committed. Deviations from the plan
+as written, and why:
+
+- **Ports do not import a schema library.** `Tool.InputSchema` returns
+  `json.RawMessage` rather than `*jsonschema.Schema`, which would have pulled the
+  SDK's schema package into `port` and through it into `core`. The MCP SDK
+  accepts `json.RawMessage` for a tool's schema, so this costs nothing.
+- **`tool.Typed` has no `Out` type parameter.** `port.Tool` carries no output
+  schema, so one would have constrained `Result.Structured` and nothing else,
+  while forcing every prose-only tool to name a type it does not have.
+- **`tool.Typed` validates against the schema.** Not in the plan, and necessary:
+  the SDK's low-level tool registration leaves validation to the caller, so
+  without it a published `required` field was silently accepted as a zero value.
+- **Scopes live on the token, not the user.** It makes issuing a read-only token
+  possible without touching existing access, and matches how OAuth providers
+  work, so the OIDC adapter will not change the shape of a `Principal`.
+- **`AuthFailure` lives in `domain`, not in the local adapter.** A rejection that
+  reveals nothing while carrying a loggable reason is part of the
+  `Authenticator` contract, not one adapter's detail.
+- **One MCP server, not one per session.** The plan implied a per-session server
+  for filtering. That made unlisted tools unroutable, so a caller lacking a scope
+  was told "no such tool" — contradicting the decision to give a clear message.
+  `tools/list` is now filtered by middleware per request instead, which also
+  makes the listing reflect the token presented now rather than at session open.
+- **E5 needed no code.** Setting `TokenInfo.UserID` is enough; the transport
+  pins a session to one user. Verified by a test that first replays the identical
+  request as the session's owner, so it cannot pass for another reason.
+
+Not done, because it cannot be done unattended: verification against a real
+client. The README documents both `claude mcp add` and MCP Inspector. Everything
+else is covered by the automated suite, including end-to-end acceptance tests
+that fake nothing.
