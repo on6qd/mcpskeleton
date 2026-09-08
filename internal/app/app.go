@@ -94,8 +94,13 @@ func Build(cfg config.Config, log *slog.Logger) (*Wiring, error) {
 		},
 	}))
 
+	// The logger wraps everything, so a rejected request is logged too — and it
+	// wraps authentication rather than the reverse, since a 401 is exactly the
+	// request an operator most wants a line for.
+	handler := adapterhttp.RequestLogger(log)(mux)
+
 	return &Wiring{
-		Handler:    mux,
+		Handler:    handler,
 		Users:      users,
 		NotesStore: notesStore,
 		Registry:   reg,

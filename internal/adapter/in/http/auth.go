@@ -44,6 +44,7 @@ func Verifier(authenticator port.Authenticator, log *slog.Logger) sdkauth.TokenV
 				log.LogAttrs(ctx, slog.LevelInfo, "authentication rejected",
 					slog.String("reason", domain.FailureReason(err)),
 					slog.String("path", requestPath(req)),
+					slog.String("request_id", requestID(req)),
 				)
 				return nil, rejected(err)
 			}
@@ -54,8 +55,14 @@ func Verifier(authenticator port.Authenticator, log *slog.Logger) sdkauth.TokenV
 			log.LogAttrs(ctx, slog.LevelError, "authentication failed",
 				slog.String("error", err.Error()),
 				slog.String("path", requestPath(req)),
+				slog.String("request_id", requestID(req)),
 			)
 			return nil, err
+		}
+
+		// Tell the access log who this request turned out to belong to.
+		if req != nil {
+			recordSubject(req.Context(), principal.Subject)
 		}
 
 		return tokenInfo(principal), nil
@@ -149,4 +156,11 @@ func requestPath(req *http.Request) string {
 		return ""
 	}
 	return req.URL.Path
+}
+
+func requestID(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	return RequestID(req.Context())
 }
