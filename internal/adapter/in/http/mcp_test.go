@@ -272,6 +272,11 @@ func TestCallingAForbiddenToolIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("CallTool succeeded on a tool the caller lacks the scope for")
 	}
+	// The caller is told what they lack. A "no such tool" here would send
+	// someone hunting a typo instead of asking for a scope.
+	if !strings.Contains(err.Error(), notestool.ScopeWrite) {
+		t.Errorf("error = %q, want it to name the missing scope %q", err, notestool.ScopeWrite)
+	}
 
 	// And nothing was written.
 	res, listErr := session.CallTool(context.Background(), &mcp.CallToolParams{
@@ -300,6 +305,32 @@ func TestUnauthenticatedSessionIsRefused(t *testing.T) {
 
 	if _, err := client.Connect(context.Background(), transport, nil); err == nil {
 		t.Fatal("Connect succeeded with no credential")
+	}
+}
+
+// Unlisted and non-existent are different answers, and a caller needs to be
+// able to tell them apart.
+func TestForbiddenAndUnknownAreDistinguishable(t *testing.T) {
+	t.Parallel()
+
+	srv := newTestServer(t, map[string]domain.Principal{
+		"readonly": {Subject: "bob", Scopes: []string{notestool.ScopeRead}},
+	})
+	session := connect(t, srv, "readonly")
+	ctx := context.Background()
+
+	_, forbidden := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "notes_add", Arguments: map[string]any{"body": "x"},
+	})
+	_, missing := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "no_such_tool", Arguments: map[string]any{},
+	})
+
+	if forbidden == nil || missing == nil {
+		t.Fatalf("both calls should fail: forbidden=%v missing=%v", forbidden, missing)
+	}
+	if forbidden.Error() == missing.Error() {
+		t.Errorf("a forbidden tool and a missing one give the same message %q", forbidden)
 	}
 }
 
