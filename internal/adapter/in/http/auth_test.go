@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,14 +22,23 @@ import (
 const metadataURL = "https://mcp.example.com/.well-known/oauth-protected-resource"
 
 // fakeAuthenticator is a port.Authenticator driven by a table of tokens.
+//
+// It is called from concurrent HTTP handlers, so its recording is guarded. A
+// fake that races is a fake that fails tests for reasons that have nothing to
+// do with the code under test.
 type fakeAuthenticator struct {
 	principals map[string]domain.Principal
 	failWith   error
-	seen       []string
+
+	mu   sync.Mutex
+	seen []string
 }
 
 func (f *fakeAuthenticator) Authenticate(_ context.Context, bearer string) (domain.Principal, error) {
+	f.mu.Lock()
 	f.seen = append(f.seen, bearer)
+	f.mu.Unlock()
+
 	if f.failWith != nil {
 		return domain.Principal{}, f.failWith
 	}
@@ -36,6 +47,13 @@ func (f *fakeAuthenticator) Authenticate(_ context.Context, bearer string) (doma
 		return domain.Principal{}, domain.NewAuthFailure("unknown token")
 	}
 	return p, nil
+}
+
+// credentialsSeen returns every credential presented so far.
+func (f *fakeAuthenticator) credentialsSeen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.seen)
 }
 
 var _ port.Authenticator = (*fakeAuthenticator)(nil)
