@@ -2,7 +2,6 @@ package local
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -54,13 +53,13 @@ func NewAuthenticator(store *Store, opts ...AuthenticatorOption) *Authenticator 
 // broken deployment into a mystery.
 func (a *Authenticator) Authenticate(_ context.Context, bearer string) (domain.Principal, error) {
 	if bearer == "" {
-		return domain.Principal{}, failure("no credential presented")
+		return domain.Principal{}, domain.NewAuthFailure("no credential presented")
 	}
 	// A cheap filter that avoids a file read for something that cannot be one of
 	// our tokens. It is not a security check: a well-formed unknown token is
 	// rejected below in exactly the same way.
 	if !ValidTokenFormat(bearer) {
-		return domain.Principal{}, failure("malformed credential")
+		return domain.Principal{}, domain.NewAuthFailure("malformed credential")
 	}
 
 	match, found, err := a.store.FindByTokenHash(HashToken(bearer))
@@ -68,13 +67,13 @@ func (a *Authenticator) Authenticate(_ context.Context, bearer string) (domain.P
 		return domain.Principal{}, fmt.Errorf("local: reading credentials: %w", err)
 	}
 	if !found {
-		return domain.Principal{}, failure("unknown token")
+		return domain.Principal{}, domain.NewAuthFailure("unknown token")
 	}
 	if !match.User.Enabled {
-		return domain.Principal{}, failure("user disabled")
+		return domain.Principal{}, domain.NewAuthFailure("user disabled")
 	}
 	if match.Token.IsExpired(a.now()) {
-		return domain.Principal{}, failure("token expired")
+		return domain.Principal{}, domain.NewAuthFailure("token expired")
 	}
 
 	// The Principal is complete here. The core will not look anything up to
@@ -87,35 +86,6 @@ func (a *Authenticator) Authenticate(_ context.Context, bearer string) (domain.P
 		principal.ExpiresAt = *match.Token.ExpiresAt
 	}
 	return principal, nil
-}
-
-// unauthenticatedMessage is what every authentication failure says, whatever
-// actually went wrong.
-const unauthenticatedMessage = "invalid credential"
-
-// authFailure is an authentication failure that reveals nothing in its message
-// and remembers why for the benefit of logs.
-type authFailure struct{ reason string }
-
-func failure(reason string) error { return &authFailure{reason: reason} }
-
-func (e *authFailure) Error() string { return unauthenticatedMessage }
-
-// Unwrap makes every authentication failure match domain.ErrUnauthenticated,
-// which is how the transport knows to answer 401.
-func (e *authFailure) Unwrap() error { return domain.ErrUnauthenticated }
-
-// FailureReason returns why an authentication failed, for logging.
-//
-// It returns "" for anything that is not an authentication failure. The reason
-// is deliberately unreachable through Error(), so it cannot end up in a
-// response by someone formatting the error.
-func FailureReason(err error) string {
-	var f *authFailure
-	if errors.As(err, &f) {
-		return f.reason
-	}
-	return ""
 }
 
 var _ port.Authenticator = (*Authenticator)(nil)

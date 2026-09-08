@@ -218,7 +218,7 @@ func TestAuthenticateRejections(t *testing.T) {
 			if !errors.Is(err, domain.ErrUnauthenticated) {
 				t.Errorf("error = %v, want one matching ErrUnauthenticated", err)
 			}
-			if got := local.FailureReason(err); got != tc.reason {
+			if got := domain.FailureReason(err); got != tc.reason {
 				t.Errorf("FailureReason = %q, want %q", got, tc.reason)
 			}
 		})
@@ -278,7 +278,7 @@ func TestFailureReasonIsNotInTheMessage(t *testing.T) {
 		t.Fatal("Authenticate succeeded, want a rejection")
 	}
 
-	reason := local.FailureReason(err)
+	reason := domain.FailureReason(err)
 	if reason == "" {
 		t.Fatal("FailureReason is empty; there is nothing to log")
 	}
@@ -290,10 +290,10 @@ func TestFailureReasonIsNotInTheMessage(t *testing.T) {
 func TestFailureReasonOfOtherErrors(t *testing.T) {
 	t.Parallel()
 
-	if got := local.FailureReason(nil); got != "" {
+	if got := domain.FailureReason(nil); got != "" {
 		t.Errorf("FailureReason(nil) = %q, want empty", got)
 	}
-	if got := local.FailureReason(errors.New("something else")); got != "" {
+	if got := domain.FailureReason(errors.New("something else")); got != "" {
 		t.Errorf("FailureReason(other) = %q, want empty", got)
 	}
 }

@@ -55,3 +55,43 @@ func (e *ToolError) Error() string {
 
 // Unwrap exposes the cause to errors.Is and errors.As.
 func (e *ToolError) Unwrap() error { return e.Err }
+
+// AuthFailure is a rejected credential.
+//
+// Its message is the same constant whatever went wrong, so a caller cannot use
+// the response to tell an unknown credential from a revoked, expired or
+// disabled one. The reason is carried alongside, for logs, and is deliberately
+// unreachable through Error() so that formatting the error into a response
+// cannot leak it.
+//
+// This lives in domain rather than in an authenticator because it is part of
+// the Authenticator port's contract: every adapter owes the same silence, and
+// every transport reads the reason the same way.
+type AuthFailure struct {
+	// Reason is why authentication failed, for logs only. Never for a response.
+	Reason string
+}
+
+// unauthenticatedMessage is what every rejected credential says.
+const unauthenticatedMessage = "invalid credential"
+
+// NewAuthFailure returns a rejection that reveals nothing and remembers why.
+func NewAuthFailure(reason string) *AuthFailure {
+	return &AuthFailure{Reason: reason}
+}
+
+func (e *AuthFailure) Error() string { return unauthenticatedMessage }
+
+// Unwrap makes every rejection match ErrUnauthenticated, which is how a
+// transport knows to answer 401.
+func (e *AuthFailure) Unwrap() error { return ErrUnauthenticated }
+
+// FailureReason returns why an authentication failed, or "" if err is not an
+// authentication failure.
+func FailureReason(err error) string {
+	var f *AuthFailure
+	if errors.As(err, &f) {
+		return f.Reason
+	}
+	return ""
+}
