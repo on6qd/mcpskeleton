@@ -76,17 +76,17 @@ func tokenIssue(args []string, store *local.Store, out io.Writer, now func() tim
 	}
 
 	if issued.UserCreated {
-		fmt.Fprintf(out, "Created user %q.\n", issued.Subject)
+		_, _ = fmt.Fprintf(out, "Created user %q.\n", issued.Subject)
 	}
-	fmt.Fprintf(out, "Token id:  %s\n", issued.TokenID)
-	fmt.Fprintf(out, "Scopes:    %s\n", describeScopes(issued.Scopes))
-	fmt.Fprintf(out, "Expires:   %s\n", describeExpiry(issued.ExpiresAt))
-	fmt.Fprintf(out, "\n%s\n\n", issued.Token)
+	_, _ = fmt.Fprintf(out, "Token id:  %s\n", issued.TokenID)
+	_, _ = fmt.Fprintf(out, "Scopes:    %s\n", describeScopes(issued.Scopes))
+	_, _ = fmt.Fprintf(out, "Expires:   %s\n", describeExpiry(issued.ExpiresAt))
+	_, _ = fmt.Fprintf(out, "\n%s\n\n", issued.Token)
 	// The store keeps only a hash, so this really is the only chance.
-	fmt.Fprintln(out, "This token is shown once and cannot be recovered. Store it now.")
-	fmt.Fprintf(out, "\nTo use it with Claude Code:\n")
-	fmt.Fprintf(out, "  claude mcp add --transport http mcpskeleton <base-url>%s \\\n", config.MCPPath)
-	fmt.Fprintf(out, "    --header \"Authorization: Bearer %s\"\n", issued.Token)
+	_, _ = fmt.Fprintln(out, "This token is shown once and cannot be recovered. Store it now.")
+	_, _ = fmt.Fprintf(out, "\nTo use it with Claude Code:\n")
+	_, _ = fmt.Fprintf(out, "  claude mcp add --transport http mcpskeleton <base-url>%s \\\n", config.MCPPath)
+	_, _ = fmt.Fprintf(out, "    --header \"Authorization: Bearer %s\"\n", issued.Token)
 
 	return nil
 }
@@ -104,12 +104,12 @@ func tokenList(args []string, store *local.Store, out io.Writer) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TOKEN ID\tUSER\tSCOPES\tCREATED\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "TOKEN ID\tUSER\tSCOPES\tCREATED\tEXPIRES")
 
 	rows := 0
 	for _, u := range users {
 		for _, t := range u.Tokens {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 				t.ID, u.Subject, describeScopes(t.Scopes),
 				t.CreatedAt.Format(time.RFC3339), describeExpiry(t.ExpiresAt))
 			rows++
@@ -119,7 +119,7 @@ func tokenList(args []string, store *local.Store, out io.Writer) error {
 		return err
 	}
 	if rows == 0 {
-		fmt.Fprintln(out, "\nNo tokens have been issued.")
+		_, _ = fmt.Fprintln(out, "\nNo tokens have been issued.")
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func tokenRevoke(args []string, store *local.Store, out io.Writer) error {
 	}
 
 	// Authentication reads the file on every request, so this is already true.
-	fmt.Fprintf(out, "Revoked %s. It stops working on the next request.\n", id)
+	_, _ = fmt.Fprintf(out, "Revoked %s. It stops working on the next request.\n", id)
 	return nil
 }
 
@@ -166,15 +166,15 @@ func runUser(args []string, cfg config.Config, out io.Writer) error {
 	}
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SUBJECT\tID\tENABLED\tTOKENS")
+	_, _ = fmt.Fprintln(tw, "SUBJECT\tID\tENABLED\tTOKENS")
 	for _, u := range users {
-		fmt.Fprintf(tw, "%s\t%s\t%t\t%d\n", u.Subject, u.ID, u.Enabled, len(u.Tokens))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%t\t%d\n", u.Subject, u.ID, u.Enabled, len(u.Tokens))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
 	if len(users) == 0 {
-		fmt.Fprintf(out, "\nNo users in %s.\n", cfg.UsersFile)
+		_, _ = fmt.Fprintf(out, "\nNo users in %s.\n", cfg.UsersFile)
 	}
 	return nil
 }

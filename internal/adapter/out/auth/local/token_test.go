@@ -74,8 +74,8 @@ func TestHashTokenIsStableAndDistinguishing(t *testing.T) {
 
 	a, b := "mcps_aaa", "mcps_bbb"
 
-	if local.HashToken(a) != local.HashToken(a) {
-		t.Error("HashToken is not deterministic")
+	if first, second := local.HashToken(a), local.HashToken(a); first != second {
+		t.Errorf("HashToken is not deterministic: %q then %q", first, second)
 	}
 	if local.HashToken(a) == local.HashToken(b) {
 		t.Error("different tokens hashed to the same value")

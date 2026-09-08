@@ -352,20 +352,22 @@ func (s *Store) save(doc document) error {
 		return fmt.Errorf("local: creating a temporary file in %s: %w", dir, err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	// A no-op once the rename has succeeded. If it fails there is nothing
+	// useful to do: the write itself either worked or is already being reported.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	// Permissions are narrowed before any content is written, so the file is
 	// never briefly readable by others while it holds credential hashes.
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // the write error below is the one worth reporting
 		return fmt.Errorf("local: setting permissions on %s: %w", tmpName, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // the write error below is the one worth reporting
 		return fmt.Errorf("local: writing %s: %w", tmpName, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // the write error below is the one worth reporting
 		return fmt.Errorf("local: syncing %s: %w", tmpName, err)
 	}
 	if err := tmp.Close(); err != nil {

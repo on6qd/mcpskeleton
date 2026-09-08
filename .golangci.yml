@@ -1,0 +1,32 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose      # an unclosed response body leaks a connection
+    - errorlint      # errors.Is/As rather than == and type assertions, which this codebase relies on
+    - copyloopvar
+    - misspell
+    - revive
+    - unconvert
+    - usestdlibvars
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true  # doc comments are reviewed by humans, not counted by a linter
+
+  exclusions:
+    rules:
+      # Tests deliberately ignore errors on cleanup paths and construct odd
+      # inputs; holding them to production error-handling rules produces noise
+      # rather than bugs.
+      - path: _test\.go$
+        linters:
+          - bodyclose
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

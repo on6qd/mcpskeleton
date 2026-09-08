@@ -88,8 +88,9 @@ func TestTypedSchemaIsStable(t *testing.T) {
 	t.Parallel()
 
 	tl := tool.Typed("greet", "", "", greet)
-	if string(tl.InputSchema()) != string(tl.InputSchema()) {
-		t.Error("InputSchema returned different JSON on successive calls")
+	first, second := string(tl.InputSchema()), string(tl.InputSchema())
+	if first != second {
+		t.Errorf("InputSchema returned different JSON on successive calls:\n%s\n%s", first, second)
 	}
 }
 
@@ -156,6 +157,7 @@ func TestTypedExecuteBadArgumentsAreToolErrors(t *testing.T) {
 		{"malformed JSON", json.RawMessage(`{"name":`)},
 		{"wrong type", json.RawMessage(`{"name":42}`)},
 		{"not an object", json.RawMessage(`"just a string"`)},
+		//nolint:misspell // the misspelling is what this case tests
 		{"misspelled field", json.RawMessage(`{"nmae":"bob"}`)},
 	}
 

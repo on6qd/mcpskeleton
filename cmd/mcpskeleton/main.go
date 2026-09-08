@@ -63,7 +63,7 @@ func run(ctx context.Context, args []string, getenv config.Getenv, stdout, stder
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintf(w, `mcpskeleton — an MCP server over streamable HTTP
+	_, _ = fmt.Fprintf(w, `mcpskeleton — an MCP server over streamable HTTP
 
 Usage:
   mcpskeleton serve                         Run the server
